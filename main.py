@@ -5,6 +5,18 @@ import threading
 DB = {}
 
 
+def expireKeys(key):
+    """
+    Expire the key after the specified time.
+
+    Args:
+        key (str): The key to expire.
+    """
+    global DB
+    if key in DB:
+        del DB[key]
+
+
 def parseRequest(request: str):
     """
     Parse the request string and extract the command and its arguments.
@@ -46,6 +58,10 @@ def generateResponse(command: str, args: list[str]):
     elif command == "SET":
         try:
             DB[args[0]] = args[1]
+            if len(args) == 4:
+                threading.Timer(
+                    interval=int(args[3]) / 1000, function=expireKeys, args=(args[0],)
+                ).start()
             return "+OK\r\n"
         except IndexError:
             return "-ERR wrong number of arguments for 'set' command\r\n"
