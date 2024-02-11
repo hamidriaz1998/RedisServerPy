@@ -2,6 +2,9 @@ import socket
 import threading
 
 
+DB = {}
+
+
 def parseRequest(request: str):
     """
     Parse the request string and extract the command and its arguments.
@@ -32,10 +35,25 @@ def generateResponse(command: str, args: list[str]):
     Returns:
         str: The response string.
     """
-    if command == "ECHO" or (command == "PING" and args):
+    global DB
+    if command == "ECHO":
         return "+" + " ".join(args) + "\r\n"
-    elif command == "PING" and not args:
-        return "+PONG\r\n"
+    elif command == "PING":
+        if not args:
+            return "+PONG\r\n"
+        else:
+            return "+" + " ".join(args) + "\r\n"
+    elif command == "SET":
+        try:
+            DB[args[0]] = args[1]
+            return "+OK\r\n"
+        except IndexError:
+            return "-ERR wrong number of arguments for 'set' command\r\n"
+    elif command == "GET":
+        try:
+            return f"${len(DB[args[0]])}\r\n{DB[args[0]]}\r\n"
+        except KeyError:
+            return "$-1\r\n"
     else:
         raise ValueError("Unsupported command")
 
