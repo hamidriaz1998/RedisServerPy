@@ -2,103 +2,107 @@ import socket
 import threading
 
 
-DB = {}
+class Database:
+    def __init__(self):
+        self.DB = {}
+
+    def set(self, key, value):
+        self.DB[key] = value
+
+    def get(self, key):
+        return self.DB.get(key)
+
+    def delete(self, key):
+        if key in self.DB:
+            del self.DB[key]
 
 
-def expireKeys(key):
-    """
-    Expire the key after the specified time.
-
-    Args:
-        key (str): The key to expire.
-    """
-    global DB
-    if key in DB:
-        del DB[key]
-
-
-def parseRequest(request: str):
-    """
-    Parse the request string and extract the command and its arguments.
-
-    Args:
-        request (str): The request string.
-
-    Returns:
-        Tuple[str, list[str]]: A tuple containing the command and its arguments.
-    """
-    if request.startswith("*"):  # Bulk arrays
-        parts = request.split("\r\n")
-        command = parts[2].upper()
-        args = parts[4:-1:2]
-        return command, args
-    else:
-        raise ValueError("Invalid command format")
+class CommandParser:
+    @staticmethod
+    def parse(request):
+        if request.startswith("*"):
+            parts = request.split("\r\n")
+            command = parts[2].upper()
+            args = parts[4:-1:2]
+            return command, args
+        else:
+            raise ValueError("Invalid command format")
 
 
-def generateResponse(command: str, args: list[str]):
-    """
-    Generate the response string based on the command and its arguments.
+class CommandExecutor:
+    def __init__(self, database):
+        self.db = database
 
-    Args:
-        command (str): The command.
-        args (list[str]): The arguments.
-
-    Returns:
-        str: The response string.
-    """
-    global DB
-    if command == "ECHO":
+    def __echo(self, args):
         return "+" + " ".join(args) + "\r\n"
-    elif command == "PING":
+
+    def __ping(self, args):
         if not args:
             return "+PONG\r\n"
         else:
             return "+" + " ".join(args) + "\r\n"
-    elif command == "SET":
+
+    def __set(self, args):
         try:
-            DB[args[0]] = args[1]
+            self.db.set(args[0], args[1])
             if len(args) == 4:
                 threading.Timer(
-                    interval=int(args[3]) / 1000, function=expireKeys, args=(args[0],)
+                    int(args[3]) / 1000, function=self.db.delete, args=(args[0],)
                 ).start()
             return "+OK\r\n"
-        except IndexError:
+        except:
             return "-ERR wrong number of arguments for 'set' command\r\n"
-    elif command == "GET":
+
+    def __get(self, args):
         try:
-            return f"${len(DB[args[0]])}\r\n{DB[args[0]]}\r\n"
-        except KeyError:
-            return "$-1\r\n"
-    else:
-        raise ValueError("Unsupported command")
+            value = self.db.get(args[0])
+            if value:
+                return f"${len(value)}\r\n{value}\r\n"
+            else:
+                return "$-1\r\n"
+        except:
+            return "-ERR wrong number of arguments for 'get' command\r\n"
+
+    def execute(self, command, args):
+        if command == "ECHO":
+            return self.__echo(args)
+        elif command == "PING":
+            return self.__ping(args)
+        elif command == "SET":
+            return self.__set(args)
+        elif command == "GET":
+            return self.__get(args)
 
 
-def handleClient(conn: socket, addr):
-    with conn:
-        print(f"Connected to {addr}")
-        while True:
-            request = conn.recv(1024).decode()
-            if not request:
-                print(f"Disconnected from {addr}")
-                break
-            command, args = parseRequest(request)
-            response = generateResponse(command, args).encode()
-            conn.sendall(response)
+class Server:
+    def __init__(self, address=("localhost", 6379)):
+        self.server = socket.create_server(address)
+        self.database = Database()
+        self.executor = CommandExecutor(self.database)
+
+    def handleClient(self, conn, addr):
+        with conn:
+            print(f"Connected to {addr}")
+            while True:
+                request = conn.recv(1024).decode()
+                if not request:
+                    print(f"Disconnected from {addr}")
+                    break
+                command, args = CommandParser.parse(request)
+                response = self.executor.execute(command, args).encode()
+                conn.sendall(response)
+
+    def run(self):
+        with self.server as server:
+            server.listen()
+            while True:
+                conn, addr = server.accept()
+                threading.Thread(target=self.handleClient, args=(conn, addr)).start()
 
 
 def main():
-    with socket.create_server(("localhost", 6379), reuse_port=True) as server:
-        server.listen()
-        while True:
-            try:
-                conn, addr = server.accept()
-            except Exception as e:
-                print(f"Error occured: {e}")
-            clientThread = threading.Thread(
-                target=handleClient, args=(conn, addr), daemon=True
-            )
-            clientThread.start()
+    server = Server()
+    server.run()
 
 
 if __name__ == "__main__":
